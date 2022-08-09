@@ -4,3 +4,6 @@ Anomaly_transformer/dataset/SMD/origin/.DS_Store
 Anomaly_transformer/dataset
 Anomaly_transformer/demo
 Anomaly_transformer/result
+.idea
+.ipynb_checkpoints
+Streamlit.ipynb

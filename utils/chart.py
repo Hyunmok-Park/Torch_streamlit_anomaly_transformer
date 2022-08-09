@@ -2,7 +2,11 @@ import altair as alt
 import pandas as pd
 import numpy as np
 
-def create_dataframe(source_list, label_list, column_list, start, end):
+def create_dataframe(source_list, label_list, column_list, start=None, end=None):
+
+    if start == None:
+        start = 0
+        end = source_list[0].shape[0]
 
     len_data = source_list[0].shape[0]
 
