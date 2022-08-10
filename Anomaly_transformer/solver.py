@@ -433,4 +433,4 @@ class Solver(object):
         #         accuracy, precision,
         #         recall, f_score))
 
-        return accuracy, precision, recall, f_score
+        return accuracy, precision, recall, f_score, test_energy, thresh

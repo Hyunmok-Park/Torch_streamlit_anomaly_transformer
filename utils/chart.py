@@ -4,24 +4,18 @@ import numpy as np
 
 def create_dataframe(source_list, label_list, column_list, start=None, end=None):
 
-    if start == None:
-        start = 0
-        end = source_list[0].shape[0]
-
-    len_data = source_list[0].shape[0]
-
     preprocessed = []
 
     for s, l in zip(source_list, label_list):
         if l == "Threshold":
-            preprocessed.append(np.array([s for _ in range(len_data)]).reshape(-1,1))
+            preprocessed.append(np.array([s for _ in range(start, end)]).reshape(-1,1))
         else:
             preprocessed.append(s.reshape(-1,1))
 
     preprocessed = np.array(preprocessed)
 
     step = np.array([_ for _ in range(start, end)] * len(label_list)).reshape(-1,1)
-    label = np.array([[_ for i in range(len_data)] for _ in label_list])
+    label = np.array([[_ for i in range(start, end)] for _ in label_list])
     label = np.concatenate(label, axis=0).reshape(-1,1)
     value = np.concatenate(preprocessed, axis=0).reshape(-1,1)
 
@@ -34,17 +28,24 @@ def create_dataframe(source_list, label_list, column_list, start=None, end=None)
 
     return df
 
-def get_single_chart(source, title):
+def get_single_chart(source, title, width=None, height=None):
     # Create a selection that chooses the nearest point & selects based on x-value
 
     nearest = alt.selection(type='single', nearest=True, on='mouseover',
                             fields=['Step'], empty='none')
     # The basic line
-    line = alt.Chart(source, title=title).mark_line(interpolate='basis').encode(
-        x='Step:Q',
-        y='Value:Q',
-        color='Label:N'
-    )
+    if width != None:
+        line = alt.Chart(source, title=title).mark_line(interpolate='basis').encode(
+            x='Step:Q',
+            y=alt.Y('Value:Q', scale=alt.Scale(domain=(0,1))),
+            color='Label:N'
+        ).properties(width=width, height=height)
+    else:
+        line = alt.Chart(source, title=title).mark_line(interpolate='basis').encode(
+            x='Step:Q',
+            y='Value:Q',
+            color='Label:N'
+        )
 
     # Transparent selectors across the chart. This is what tells us
     # the x-value of the cursor

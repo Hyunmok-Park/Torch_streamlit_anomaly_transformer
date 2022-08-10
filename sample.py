@@ -1,20 +1,23 @@
-import configparser
-import pickle
-import time
-
 from utils import *
 from Anomaly_transformer.model.AnomalyTransformer import *
 from Anomaly_transformer.main import *
 from Anomaly_transformer.solver import *
 
 import streamlit as st
-import numpy as np
 from streamlit_option_menu import option_menu
-from pathlib import Path
-import csv
 
+import csv
+import numpy as np
+from pathlib import Path
 import altair as alt
 import pandas as pd
+import configparser
+import pickle
+import time
+
+from pyecharts.charts import Bar
+from pyecharts.charts import Line
+from pyecharts import options as opts
 
 st.set_page_config(layout="wide")
 
@@ -37,8 +40,51 @@ if selected == "Home":
     st.markdown(intro_markdown, unsafe_allow_html=True)
 
 if selected == "Example":
+
+    feature_names = [
+        'cpu_r',  #cpu  'cpu_r',
+        'load_1', #cpu load
+        'load_5',
+        'load_15',
+        'mem_shmem',
+        'mem_u',
+        'mem_u_e',
+        'total_mem',
+        'disk_q',
+        'disk_r',
+        'disk_rb',
+        'disk_svc',
+        'disk_u',
+        'disk_w',
+        'disk_wa',
+        'disk_wb',
+        'si',
+        'so',
+        'eth1_fi',
+        'eth1_fo',
+        'eth1_pi',
+        'eth1_po',
+        'tcp_tw',
+        'tcp_use',
+        'active_opens',
+        'curr_estab',
+        'in_errs',
+        'in_segs',
+        'listen_overflows',
+        'out_rsts',
+        'out_segs',
+        'passive_opens',
+        'retransegs',
+        'tcp_timeouts',
+        'udp_in_dg',
+        'udp_out_dg',
+        'udp_rcv_buf_errs',
+        'udp_snd_buf_errs'
+    ]
+
     if "SMD" not in st.session_state:
         st.session_state.SMD = []
+        st.session_state.anomaly_feature = None
 
     st.title("Anomaly Detection")
     st.caption("* Train anomaly transformer(deep learning based anomlay detection)")
@@ -46,7 +92,6 @@ if selected == "Example":
 
     with col1:
         st.subheader("Training")
-
         dataset = st.radio("Dataset", ("SMD", "PSM"))
         btn1 = st.button(label="Start training")
 
@@ -85,47 +130,7 @@ if selected == "Example":
                 use_container_width=True
             )
     with col2:
-        st.subheader("Test")
-        feature_names = [
-            'cpu_r',  #cpu
-            'load_1', #cpu load
-            'load_5',
-            'load_15',
-            'mem_shmem',
-            'mem_u',
-            'mem_u_e',
-            'total_mem',
-            'disk_q',
-            'disk_r',
-            'disk_rb',
-            'disk_svc',
-            'disk_u',
-            'disk_w',
-            'disk_wa',
-            'disk_wb',
-            'si',
-            'so',
-            'eth1_fi',
-            'eth1_fo',
-            'eth1_pi',
-            'eth1_po',
-            'tcp_tw',
-            'tcp_use',
-            'active_opens',
-            'curr_estab',
-            'in_errs',
-            'in_segs',
-            'listen_overflows',
-            'out_rsts',
-            'out_segs',
-            'passive_opens',
-            'retransegs',
-            'tcp_timeouts',
-            'udp_in_dg',
-            'udp_out_dg',
-            'udp_rcv_buf_errs',
-            'udp_snd_buf_errs'
-        ]
+        st.subheader("Inference")
 
         if len(st.session_state.SMD) != 0:
             if dataset == "SMD":
@@ -147,8 +152,8 @@ if selected == "Example":
             anomal_point = np.where(pred == 1)[0]
 
             # Plot feature and window
-            slider = int(st.slider("Slider", start, end-100))
-            source1 = create_dataframe([feature_value[:1000, [0,5,10,15,20,25,35]]], [feature_names[_] for _ in [0,5,10,15,20,25,35]], ['Step', 'Label', 'Value'], start, end)
+            slider = int(st.slider("Detection window", start, end-100))
+            source1 = create_dataframe([feature_value[:1000, [0,5,10,15,20,25,35]].T], [feature_names[_] for _ in [0,5,10,15,20,25,35]], ['Step', 'Label', 'Value'], start, end)
             line1 = get_single_chart(source1, "Feature")
             cutoff = pd.DataFrame({
                 'index': ['blue'],
@@ -173,7 +178,7 @@ if selected == "Example":
 
             # Plot anomaly score in window
             select_anomaly = st.selectbox(
-                "Detected anomaly points",
+                f"Detected anomaly points \n (Total {len(anomal_point)} anomaly detected)",
                 options=["---"] + [f"{__ + start}" for _, __ in enumerate(anomal_point)],
                 index=0,
             )
@@ -273,19 +278,18 @@ if selected == "Example":
                 )
 
                 # Plot interpretation
-                anomaly_feature = None
                 if int(select_anomaly) in interpret:
-                    anomaly_feature = interpret[int(select_anomaly)]
+                    st.session_state.anomaly_feature = interpret[int(select_anomaly)]
                 else:
                     for _ in range(slider, slider+101):
                         if _ in interpret:
-                            anomaly_feature = interpret[_]
+                            st.session_state.anomaly_feature = interpret[_]
                             break
 
-    st.caption("* Cause of abnormality")
-    try:
+    if st.session_state.anomaly_feature is not None:
+        st.caption("* Cause of abnormality")
         col1_, col2_, col3_ = st.columns([1,1,1])
-        for idx, _ in enumerate(anomaly_feature):
+        for idx, _ in enumerate(st.session_state.anomaly_feature):
             if idx & 3 == 0:
                 with col1_:
                     source = create_dataframe([feature_value[slider - start : slider + 200 - start, _]], [feature_names[_]], ['Step', 'Label', 'Value'], slider, slider + test_energy[slider - start : slider + 200 - start].shape[0])
@@ -310,8 +314,8 @@ if selected == "Example":
                         line + rules,
                         use_container_width=True
                     )
-    except:
-        st.write("There is no anomaly feature")
+    # else:
+    #     st.write("There is no anomaly feature")
 
 
     ##################################
@@ -319,8 +323,250 @@ if selected == "Example":
     ##################################
     st.markdown("***")
     st.subheader("Online detecting")
+    if "simul_test_energy" not in st.session_state:
+        st.session_state.simul_test_energy = np.load("./Anomaly_transformer/demo/test_energy.npy")
+        st.session_state.simul_train_energy = np.load("./Anomaly_transformer/demo/SMD_train_energy.npy")
+        st.session_state.simul_threshold = np.percentile(np.concatenate([st.session_state.simul_train_energy, st.session_state.simul_test_energy], axis=0), 100-0.5)
+        st.session_state.simul_test_energy = np.load("./Anomaly_transformer/demo/test_energy.npy")[18000:19000]
+        st.session_state.simul_feature_value = np.load("./Anomaly_transformer/demo/SMD_test.npy")[18000:19000]
 
+        st.session_state.simul_online_chart = None
+        st.session_state.simul_anomaly_list = {}
+        st.session_state.simul_time_list = []
 
+    # Sliding window for detection area
+    col1, col2 = st.columns([2,1])
+    with col1:
+        infer_cont = st.container()
+    with col2:
+        st.markdown(" ")
+        st.markdown(" ")
+        st.markdown(" ")
+        st.markdown(" ")
+        st.markdown(" ")
+        st.markdown(" ")
+        infer_cont_ = st.expander("Response")
+    info_cont = st.container()
+    expand_cont = st.container()
+    infer_cont.caption("* Simulation")
 
+    st.session_state.simul_expand_feature_list = []
 
+    with infer_cont:
+        if st.button("Simulate") and st.session_state.simul_online_chart is None:
+            st.session_state.simul_anomaly_score = np.zeros(1000)
+            for i in range(100,1000,20):
+                slider = i
+                line = create_dataframe([st.session_state.simul_feature_value[:slider+1,[0,5,10,15]].T], [feature_names[_] for _ in [0,5,10,15]], ['Step', 'Label', 'Value'], 0, slider+1)
+                line = get_single_chart(line, "Test")
+                line2 = create_dataframe([np.array([1 for _ in range(1000)])], ['None'], ['Step', 'Label', 'Value'], 0, 1000)
+                line2 = alt.Chart(line2).mark_line(interpolate='basis').encode(
+                    x='Step:Q',
+                    opacity=alt.value(0)
+                ).properties(width=1200, height=300)
+                cutoff = pd.DataFrame({
+                    'index': ['blue'],
+                    'start': slider - 100,
+                    'stop': slider
+                })
+                areas = alt.Chart(
+                    cutoff
+                ).mark_rect(
+                    opacity=0.2
+                ).encode(
+                    x='start',
+                    x2='stop',
+                    y=alt.value(0),  # pixels from top
+                    y2=alt.value(300),  # pixels from top
+                    color=alt.Color('index:N', scale=None)
+                )
 
+                # Online anomlay score
+                # try:
+                #     mkdir(f"./Anomaly_transformer/dataset/test/online/{slider}")
+                # except:
+                #     pass
+                # np.save(f"./Anomaly_transformer/dataset/test/online/{slider}/SMD_test.npy", st.session_state.simul_feature_value[slider-100:slider])
+
+                model_path = "SMD_2022_08_08_15_38_41"
+                config = make_config(model_path, f"./Anomaly_transformer/dataset/test/online/{slider}", 0.5, 10, 3, 512, 38, 1, 100, 512, 3, 5, 0.001)
+                solver = Solver(config)
+                tik = time.time()
+                accuracy, precision, recall, f_score, test_energy, thresh = solver.test()
+                tok = time.time()
+                st.session_state.simul_time_list.append(tok - tik)
+                st.session_state.simul_anomaly_score[slider-100:slider] = test_energy
+
+                source = create_dataframe([st.session_state.simul_anomaly_score, thresh], ['Anomaly score', 'Threshold'], ['Step', 'Label', 'Value'], 0, 1000)
+                source = get_single_chart(source, "Anomaly score", 1200, 300)
+
+                try:
+                    fig2 = fig2.altair_chart(
+                        alt.vconcat((line + areas + line2), (source + areas)),
+                        use_container_width=True
+                    )
+                except:
+                    fig2 = st.altair_chart(
+                        alt.vconcat((line + areas + line2), (source + areas)),
+                        use_container_width=True
+                    )
+                import copy
+                anomaly = np.where(st.session_state.simul_anomaly_score[slider-100:slider] > thresh)[0]
+                if len(anomaly) > 0:
+                    for i in anomaly:
+                        st.session_state.simul_anomaly_list[f'Anomaly_{slider-100+i} s / ( window : {slider-100} s ~ {slider} s)'] = {
+                            "anomaly point": i,
+                            "time": str(datetime.now()),
+                            "score": test_energy,
+                            "thres": thresh,
+                            "feature": st.session_state.simul_feature_value[slider-100:slider],
+                            "p_score": test_energy[i],
+                            "p_feature": st.session_state.simul_feature_value[slider-100:slider][i],
+                            "intensity": ((test_energy[i] - thresh) / thresh)
+                        }
+
+                        infer_cont_.write(st.session_state.simul_anomaly_list[f'Anomaly_{slider-100+i} s / ( window : {slider-100} s ~ {slider} s)'])
+
+            st.session_state.simul_online_chart = alt.vconcat((line + areas + line2), (source + areas))
+
+        elif st.session_state.simul_online_chart is not None:
+            infer_cont_.write(st.session_state.simul_anomaly_list)
+            fig2 = st.altair_chart(
+                st.session_state.simul_online_chart,
+                use_container_width=True
+            )
+
+    with info_cont:
+        if st.session_state.simul_online_chart is not None:
+            st.caption("* Result")
+            metric = pd.DataFrame({
+                "Average inference time(CPU)": [np.mean(st.session_state.simul_time_list)],
+                "Total detected anomaly": [len(st.session_state.simul_anomaly_list)]
+            })
+            st.write(metric)
+
+            k = st.selectbox(
+                "Anomaly",
+                options=list(st.session_state.simul_anomaly_list.keys()),
+                index=0
+            )
+
+            thresh = st.session_state.simul_anomaly_list[k]['thres']
+            score = st.session_state.simul_anomaly_list[k]['score']
+            score = create_dataframe([score, thresh], ['Anomaly score', 'Threshold'], ['Step', 'Label', 'Value'], 0, 100)
+            score = get_single_chart(score, "Anomaly score")
+            rules = alt.Chart(pd.DataFrame({"Step": [st.session_state.simul_anomaly_list[k]['anomaly point']]})).mark_rule(color='red').encode(
+                x='Step:Q',
+            )
+
+            st.altair_chart(
+                score + rules,
+                use_container_width=True
+            )
+
+            col1, col2, col3, col4, col5 = st.columns([1,1,1,1,1])
+            feature_value = st.session_state.simul_anomaly_list[k]['feature']
+
+            with col1:
+                st.subheader("cpu") #0,1,2,3,
+                feature_list = [0,1,2,3]
+                source = create_dataframe([feature_value[:,feature_list].T], [feature_names[_] for _ in feature_list], ['Step', 'Label', 'Value'], 0,100)
+                line = get_single_chart(source, "cpu_r")
+                st.altair_chart(
+                    line + rules,
+                    use_container_width=True
+                )
+                if st.checkbox(
+                    "Show detail",
+                    key=1
+                ):
+                    st.session_state.simul_expand_feature_list += feature_list
+
+            with col2:
+                st.subheader("disk") #8,9,10,11,12,13,14,15
+                feature_list = [8,9,10,11,12,13,14,15]
+                source = create_dataframe([feature_value[:,feature_list].T], [feature_names[_] for _ in feature_list], ['Step', 'Label', 'Value'], 0,100)
+                line = get_single_chart(source, "disk_rb")
+                st.altair_chart(
+                    line + rules,
+                    use_container_width=True
+                )
+                if st.checkbox(
+                        "Show detail",
+                        key=2
+                ):
+                    st.session_state.simul_expand_feature_list += feature_list
+
+            with col3:
+                st.subheader("memory/eth") #4,5,6,7,18,19,20,21
+                feature_list = [4,5,6,7,18,19,20,21]
+                source = create_dataframe([feature_value[:,feature_list].T], [feature_names[_] for _ in feature_list], ['Step', 'Label', 'Value'], 0,100)
+                line = get_single_chart(source, "disk_wb")
+                st.altair_chart(
+                    line + rules,
+                    use_container_width=True
+                )
+                if st.checkbox(
+                        "Show detail",
+                        key=3
+                ):
+                    st.session_state.simul_expand_feature_list += feature_list
+            with col4:
+                st.subheader("TCP/UDP") # 22,23,33,34,35,36,37
+                feature_list = [22,23,33,34,35,36,37]
+                source = create_dataframe([feature_value[:,feature_list].T], [feature_names[_] for _ in feature_list], ['Step', 'Label', 'Value'], 0,100)
+                line = get_single_chart(source, "mem_u")
+                st.altair_chart(
+                    line + rules,
+                    use_container_width=True
+                )
+                if st.checkbox(
+                        "Show detail",
+                        key=4
+                ):
+                    st.session_state.simul_expand_feature_list += feature_list
+
+            with col5:
+                st.subheader("etc") # 24,25,26,27,28,29,30,31,32
+                feature_list = [24,25,26,27,28,29,30,31,32]
+                source = create_dataframe([feature_value[:,feature_list].T], [feature_names[_] for _ in feature_list], ['Step', 'Label', 'Value'], 0,100)
+                line = get_single_chart(source, "mem_u")
+                st.altair_chart(
+                    line + rules,
+                    use_container_width=True
+                )
+                if st.checkbox(
+                        "Show detail",
+                        key=5
+                ):
+                    st.session_state.simul_expand_feature_list += feature_list
+
+    with expand_cont:
+        if st.session_state.simul_online_chart is not None:
+            st.markdown("---")
+            col1, col2, col3 = st.columns([1,1,1])
+            for idx, i in enumerate(st.session_state.simul_expand_feature_list):
+                if idx % 3 == 0:
+                    with col1:
+                        source = create_dataframe([feature_value[:, i]], [feature_names[i]], ['Step', 'Label', 'Value'], 0, 100)
+                        line = get_single_chart(source, feature_names[i])
+                        st.altair_chart(
+                            line + rules,
+                            use_container_width=True
+                        )
+                elif idx % 3 == 1:
+                    with col2:
+                        source = create_dataframe([feature_value[:, i]], [feature_names[i]], ['Step', 'Label', 'Value'], 0, 100)
+                        line = get_single_chart(source, feature_names[i])
+                        st.altair_chart(
+                            line + rules,
+                            use_container_width=True
+                        )
+                elif idx % 3 == 2:
+                    with col3:
+                        source = create_dataframe([feature_value[:, i]], [feature_names[i]], ['Step', 'Label', 'Value'], 0, 100)
+                        line = get_single_chart(source, feature_names[i])
+                        st.altair_chart(
+                            line + rules,
+                            use_container_width=True
+                        )
