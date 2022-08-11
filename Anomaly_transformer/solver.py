@@ -64,7 +64,7 @@ class EarlyStopping:
     def save_checkpoint(self, val_loss, val_loss2, model, path):
         if self.verbose:
             print(f'Validation loss decreased ({self.val_loss_min:.6f} --> {val_loss:.6f}).  Saving model ...')
-        torch.save(model.state_dict(), os.path.join(self.result_save_path, 'checkpoint.pth'))
+        torch.save(model.state_dict(), os.path.join(path, 'checkpoint.pth'))
         self.val_loss_min = val_loss
         self.val_loss2_min = val_loss2
 
@@ -95,12 +95,22 @@ class Solver(object):
         self.criterion = nn.MSELoss()
         now = datetime.now()
         self.time = now.strftime('%Y_%m_%d_%H_%M_%S')
-        self.result_save_path = os.path.join("./result", f"{self.dataset}_{self.time}")
 
-        os.mkdir(self.result_save_path)
+        if self.mode == 'train':
+            self.result_save_path = os.path.join("./Anomaly_transformer/result", f"{self.dataset}_{self.time}")
+            os.mkdir(self.result_save_path)
+        else:
+            self.result_save_path = os.path.join(self.model_save_path, f"{self.dataset}_{self.time}")
+            os.mkdir(self.result_save_path)
+
+        print(f"Save to {self.result_save_path}")
         with open(os.path.join(self.result_save_path, "config.txt"),'w',encoding='UTF-8') as f:
             for code,name in config.items():
                 f.write(f'{code} : {name}\n')
+
+        print('------------ Options -------------')
+        print(self.__dict__)
+        print('-------------- End ----------------')
 
     def build_model(self):
         self.model = AnomalyTransformer(win_size=self.win_size, enc_in=self.input_c, c_out=self.output_c, e_layers=self.elayers, d_model=self.dmodel, d_ff=self.dff)
@@ -236,7 +246,7 @@ class Solver(object):
                 "Epoch: {0}, Steps: {1} | Train Loss: {2:.7f} Vali Loss: {3:.7f} ".format(
                     epoch + 1, train_steps, train_loss, vali_loss1))
 
-            early_stopping(vali_loss1, vali_loss2, self.model, path)
+            early_stopping(vali_loss1, vali_loss2, self.model, self.result_save_path)
             if early_stopping.early_stop:
                 print("Early stopping")
                 break
@@ -245,7 +255,12 @@ class Solver(object):
         np.save(os.path.join(self.result_save_path, f"{self.dataset}_rec_list"), np.array(rec_loss_list))
         np.save(os.path.join(self.result_save_path, f"{self.dataset}_assdis_list"), np.array(assdis_list))
 
-    def test(self):
+    def test(self, test_data_path=None):
+        if test_data_path is not None:
+            self.thre_loader = get_loader_segment(test_data_path, batch_size=self.batch_size, win_size=self.win_size,
+                                              mode='thre',
+                                              dataset=self.dataset)
+
         criterion = nn.MSELoss(reduce=False)
         temperature = 50
         self.model.load_state_dict(
@@ -344,51 +359,51 @@ class Solver(object):
                 np.save(os.path.join(self.model_save_path, "combined_energy"), test_energy)
 
         # (3) evaluation on the test set
-        with st.spinner(text="Evaluation on the test set..."):
-            my_bar = st.progress(0)
-            test_labels = []
-            attens_energy = []
-            for i, (input_data, labels) in enumerate(self.thre_loader):
-                my_bar.progress(int(i * (100 / len(self.thre_loader))) + 1)
-                input = input_data.float().to(self.device)
-                output, series, prior, _ = self.model(input)
+        # with st.spinner(text="Evaluation on the test set..."):
+        #     my_bar = st.progress(0)
+        test_labels = []
+        attens_energy = []
+        for i, (input_data, labels) in enumerate(self.thre_loader):
+            # my_bar.progress(int(i * (100 / len(self.thre_loader))) + 1)
+            input = input_data.float().to(self.device)
+            output, series, prior, _ = self.model(input)
 
-                loss = torch.mean(criterion(input, output), dim=-1)
+            loss = torch.mean(criterion(input, output), dim=-1)
 
-                series_loss = 0.0
-                prior_loss = 0.0
-                for u in range(len(prior)):
-                    if u == 0:
-                        series_loss = my_kl_loss(series[u], (
-                                prior[u] / torch.unsqueeze(torch.sum(prior[u], dim=-1), dim=-1).repeat(1, 1, 1,
-                                                                                                       self.win_size)).detach()) * temperature
-                        prior_loss = my_kl_loss(
-                            (prior[u] / torch.unsqueeze(torch.sum(prior[u], dim=-1), dim=-1).repeat(1, 1, 1,
-                                                                                                    self.win_size)),
-                            series[u].detach()) * temperature
-                    else:
-                        series_loss += my_kl_loss(series[u], (
-                                prior[u] / torch.unsqueeze(torch.sum(prior[u], dim=-1), dim=-1).repeat(1, 1, 1,
-                                                                                                       self.win_size)).detach()) * temperature
-                        prior_loss += my_kl_loss(
-                            (prior[u] / torch.unsqueeze(torch.sum(prior[u], dim=-1), dim=-1).repeat(1, 1, 1,
-                                                                                                    self.win_size)),
-                            series[u].detach()) * temperature
-                metric = torch.softmax((-series_loss - prior_loss), dim=-1)
+            series_loss = 0.0
+            prior_loss = 0.0
+            for u in range(len(prior)):
+                if u == 0:
+                    series_loss = my_kl_loss(series[u], (
+                            prior[u] / torch.unsqueeze(torch.sum(prior[u], dim=-1), dim=-1).repeat(1, 1, 1,
+                                                                                                   self.win_size)).detach()) * temperature
+                    prior_loss = my_kl_loss(
+                        (prior[u] / torch.unsqueeze(torch.sum(prior[u], dim=-1), dim=-1).repeat(1, 1, 1,
+                                                                                                self.win_size)),
+                        series[u].detach()) * temperature
+                else:
+                    series_loss += my_kl_loss(series[u], (
+                            prior[u] / torch.unsqueeze(torch.sum(prior[u], dim=-1), dim=-1).repeat(1, 1, 1,
+                                                                                                   self.win_size)).detach()) * temperature
+                    prior_loss += my_kl_loss(
+                        (prior[u] / torch.unsqueeze(torch.sum(prior[u], dim=-1), dim=-1).repeat(1, 1, 1,
+                                                                                                self.win_size)),
+                        series[u].detach()) * temperature
+            metric = torch.softmax((-series_loss - prior_loss), dim=-1)
 
-                cri = metric * loss
-                cri = cri.detach().cpu().numpy()
-                attens_energy.append(cri)
-                test_labels.append(labels)
-            my_bar.empty()
+            cri = metric * loss
+            cri = cri.detach().cpu().numpy()
+            attens_energy.append(cri)
+            test_labels.append(labels)
+            # my_bar.empty()
 
-            attens_energy = np.concatenate(attens_energy, axis=0).reshape(-1)
-            test_labels = np.concatenate(test_labels, axis=0).reshape(-1)
-            test_energy = np.array(attens_energy)
-            test_labels = np.array(test_labels)
+        attens_energy = np.concatenate(attens_energy, axis=0).reshape(-1)
+        test_labels = np.concatenate(test_labels, axis=0).reshape(-1)
+        test_energy = np.array(attens_energy)
+        test_labels = np.array(test_labels)
 
-            np.save(os.path.join(self.model_save_path, f"test_energy"), test_energy)
-            np.save(os.path.join(self.model_save_path, f"test_labels"), test_labels)
+        np.save(os.path.join(self.result_save_path, f"test_energy"), test_energy)
+        np.save(os.path.join(self.result_save_path, f"test_labels"), test_labels)
 
         # test_energy = np.load(os.path.join(self.model_save_path, "test_energy.npy"))
         # test_labels = np.load(os.path.join(self.model_save_path, "test_labels.npy"))

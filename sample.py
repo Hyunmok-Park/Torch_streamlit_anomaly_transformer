@@ -179,7 +179,7 @@ if selected == "Example":
             # Plot anomaly score in window
             select_anomaly = st.selectbox(
                 f"Detected anomaly points \n (Total {len(anomal_point)} anomaly detected)",
-                options=["---"] + [f"{__ + start}" for _, __ in enumerate(anomal_point)],
+                options=["---"] + [f"{__ + start} sec" for _, __ in enumerate(anomal_point)],
                 index=0,
             )
 
@@ -229,6 +229,7 @@ if selected == "Example":
                     use_container_width=True
                 )
             else:
+                select_anomaly = select_anomaly.split(" ")[0]
                 slider = int(select_anomaly) - 100
                 source2 = create_dataframe([test_energy[slider - start : slider + 200 - start], threshold], ['Anomaly score', 'Threshold'], ['Step', 'Label', "Value"], slider, slider + test_energy[slider - start : slider + 200 - start].shape[0])
                 line2 = get_single_chart(source2, "Anomaly score")
@@ -286,7 +287,7 @@ if selected == "Example":
                             st.session_state.anomaly_feature = interpret[_]
                             break
 
-    if st.session_state.anomaly_feature is not None:
+    if st.session_state.anomaly_feature is not None and select_anomaly != "---":
         st.caption("* Cause of abnormality")
         col1_, col2_, col3_ = st.columns([1,1,1])
         for idx, _ in enumerate(st.session_state.anomaly_feature):
@@ -323,22 +324,31 @@ if selected == "Example":
     ##################################
     st.markdown("***")
     st.subheader("Online detecting")
-    if "simul_test_energy" not in st.session_state:
-        st.session_state.simul_test_energy = np.load("./Anomaly_transformer/demo/test_energy.npy")
-        st.session_state.simul_train_energy = np.load("./Anomaly_transformer/demo/SMD_train_energy.npy")
-        st.session_state.simul_threshold = np.percentile(np.concatenate([st.session_state.simul_train_energy, st.session_state.simul_test_energy], axis=0), 100-0.5)
-        st.session_state.simul_test_energy = np.load("./Anomaly_transformer/demo/test_energy.npy")[18000:19000]
-        st.session_state.simul_feature_value = np.load("./Anomaly_transformer/demo/SMD_test.npy")[18000:19000]
 
-        st.session_state.simul_online_chart = None
-        st.session_state.simul_anomaly_list = {}
-        st.session_state.simul_time_list = []
+    def reset(force=False):
+        if "simul_test_energy" not in st.session_state or force:
+            st.session_state.simul_test_energy = np.load("./Anomaly_transformer/demo/test_energy.npy")
+            st.session_state.simul_train_energy = np.load("./Anomaly_transformer/demo/SMD_train_energy.npy")
+            st.session_state.simul_threshold = np.percentile(np.concatenate([st.session_state.simul_train_energy, st.session_state.simul_test_energy], axis=0), 100-0.5)
+            st.session_state.simul_test_energy = np.load("./Anomaly_transformer/demo/test_energy.npy")[18000:19000]
+            st.session_state.simul_feature_value = np.load("./Anomaly_transformer/demo/SMD_test.npy")[18000:19000]
 
+            st.session_state.simul_online_chart = None
+            st.session_state.simul_anomaly_list = {}
+            st.session_state.simul_time_list = []
+
+    reset()
     # Sliding window for detection area
     col1, col2 = st.columns([2,1])
     with col1:
         infer_cont = st.container()
     with col2:
+        st.markdown(" ")
+        st.markdown(" ")
+        st.markdown(" ")
+        st.markdown(" ")
+        st.markdown(" ")
+        st.markdown(" ")
         st.markdown(" ")
         st.markdown(" ")
         st.markdown(" ")
@@ -353,9 +363,21 @@ if selected == "Example":
     st.session_state.simul_expand_feature_list = []
 
     with infer_cont:
-        if st.button("Simulate") and st.session_state.simul_online_chart is None:
+        detect_interval = st.number_input(
+            "Detecting interval",
+            value=15
+        )
+        simul_btn = st.button("Simulate")
+        if simul_btn:
+            reset(True)
+
+        if simul_btn and st.session_state.simul_online_chart is None:
             st.session_state.simul_anomaly_score = np.zeros(1000)
-            for i in range(100,1000,20):
+            model_path = "SMD_2022_08_08_15_38_41"
+            config = make_config(model_path, f"./Anomaly_transformer/dataset/test/online/100", 0.5, 10, 3, 512, 38, 1, 100, 512, 3, 5, 0.001)
+            solver = Solver(config)
+
+            for i in range(100,1000,detect_interval):
                 slider = i
                 line = create_dataframe([st.session_state.simul_feature_value[:slider+1,[0,5,10,15]].T], [feature_names[_] for _ in [0,5,10,15]], ['Step', 'Label', 'Value'], 0, slider+1)
                 line = get_single_chart(line, "Test")
@@ -381,18 +403,17 @@ if selected == "Example":
                     color=alt.Color('index:N', scale=None)
                 )
 
+                ####
                 # Online anomlay score
-                # try:
-                #     mkdir(f"./Anomaly_transformer/dataset/test/online/{slider}")
-                # except:
-                #     pass
-                # np.save(f"./Anomaly_transformer/dataset/test/online/{slider}/SMD_test.npy", st.session_state.simul_feature_value[slider-100:slider])
+                try:
+                    mkdir(f"./Anomaly_transformer/dataset/test/online/{slider}")
+                except:
+                    pass
+                np.save(f"./Anomaly_transformer/dataset/test/online/{slider}/SMD_test.npy", st.session_state.simul_feature_value[slider-100:slider])
+                ####
 
-                model_path = "SMD_2022_08_08_15_38_41"
-                config = make_config(model_path, f"./Anomaly_transformer/dataset/test/online/{slider}", 0.5, 10, 3, 512, 38, 1, 100, 512, 3, 5, 0.001)
-                solver = Solver(config)
                 tik = time.time()
-                accuracy, precision, recall, f_score, test_energy, thresh = solver.test()
+                accuracy, precision, recall, f_score, test_energy, thresh = solver.test(test_data_path=f"./Anomaly_transformer/dataset/test/online/{slider}")
                 tok = time.time()
                 st.session_state.simul_time_list.append(tok - tik)
                 st.session_state.simul_anomaly_score[slider-100:slider] = test_energy
@@ -410,7 +431,7 @@ if selected == "Example":
                         alt.vconcat((line + areas + line2), (source + areas)),
                         use_container_width=True
                     )
-                import copy
+
                 anomaly = np.where(st.session_state.simul_anomaly_score[slider-100:slider] > thresh)[0]
                 if len(anomaly) > 0:
                     for i in anomaly:
@@ -439,11 +460,9 @@ if selected == "Example":
     with info_cont:
         if st.session_state.simul_online_chart is not None:
             st.caption("* Result")
-            metric = pd.DataFrame({
-                "Average inference time(CPU)": [np.mean(st.session_state.simul_time_list)],
-                "Total detected anomaly": [len(st.session_state.simul_anomaly_list)]
-            })
-            st.write(metric)
+            _1, _2, _, _, _ = st.columns([1,1,1,1,1])
+            _1.metric("Average inference time(CPU)", np.mean(st.session_state.simul_time_list))
+            _2.metric("Total detected anomaly", len(st.session_state.simul_anomaly_list))
 
             k = st.selectbox(
                 "Anomaly",
