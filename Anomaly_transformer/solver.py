@@ -97,6 +97,11 @@ class Solver(object):
         self.time = now.strftime('%Y_%m_%d_%H_%M_%S')
         self.result_save_path = os.path.join("./result", f"{self.dataset}_{self.time}")
 
+        os.mkdir(self.result_save_path)
+        with open(os.path.join(self.result_save_path, "config.txt"),'w',encoding='UTF-8') as f:
+            for code,name in config.items():
+                f.write(f'{code} : {name}\n')
+
     def build_model(self):
         self.model = AnomalyTransformer(win_size=self.win_size, enc_in=self.input_c, c_out=self.output_c, e_layers=self.elayers, d_model=self.dmodel, d_ff=self.dff)
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
