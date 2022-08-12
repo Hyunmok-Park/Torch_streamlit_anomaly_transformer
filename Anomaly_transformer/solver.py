@@ -1,3 +1,4 @@
+import pickle
 from datetime import datetime
 
 import torch
@@ -5,15 +6,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 import os
+import random
 import time
 from .utils.utils import *
 from .model.AnomalyTransformer import AnomalyTransformer
 from .data_factory.data_loader import get_loader_segment
 
 from tqdm import tqdm
-
-import streamlit as st
-
 
 def my_kl_loss(p, q):
     # (bhls)
@@ -73,40 +72,10 @@ class Solver(object):
     DEFAULTS = {}
 
     def __init__(self, config):
-
         self.__dict__.update(Solver.DEFAULTS, **config)
-
-        self.train_loader = get_loader_segment(self.data_path, batch_size=self.batch_size, win_size=self.win_size,
-                                               mode='train',
-                                               dataset=self.dataset)
-        self.vali_loader = get_loader_segment(self.data_path, batch_size=self.batch_size, win_size=self.win_size,
-                                              mode='val',
-                                              dataset=self.dataset)
-        self.test_loader = get_loader_segment(self.data_path, batch_size=self.batch_size, win_size=self.win_size,
-                                              mode='test',
-                                              dataset=self.dataset)
-        self.thre_loader = get_loader_segment(self.data_path, batch_size=self.batch_size, win_size=self.win_size,
-                                              mode='thre',
-                                              dataset=self.dataset)
-
         self.build_model()
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-        # self.device = torch.device("cpu" if torch.backends.cpu.is_available() else "cpu")
         self.criterion = nn.MSELoss()
-        now = datetime.now()
-        self.time = now.strftime('%Y_%m_%d_%H_%M_%S')
-
-        if self.mode == 'train':
-            self.result_save_path = os.path.join("./Anomaly_transformer/result", f"{self.dataset}_{self.time}")
-            os.mkdir(self.result_save_path)
-        else:
-            self.result_save_path = os.path.join(self.model_save_path, f"{self.dataset}_{self.time}")
-            os.mkdir(self.result_save_path)
-
-        print(f"Save to {self.result_save_path}")
-        with open(os.path.join(self.result_save_path, "config.txt"),'w',encoding='UTF-8') as f:
-            for code,name in config.items():
-                f.write(f'{code} : {name}\n')
 
         print('------------ Options -------------')
         print(self.__dict__)
@@ -156,17 +125,34 @@ class Solver(object):
 
         return np.average(loss_1), np.average(loss_2)
 
-    def train(self):
+    def train(self, config):
+
+        self.train_loader = get_loader_segment(self.data_path, batch_size=self.batch_size, win_size=self.win_size,
+                                               mode='train',
+                                               dataset=self.dataset)
+        self.vali_loader = get_loader_segment(self.data_path, batch_size=self.batch_size, win_size=self.win_size,
+                                              mode='val',
+                                              dataset=self.dataset)
+
+        time_now = time.time()
+        now = datetime.now()
+        self.time = now.strftime('%Y_%m_%d_%H_%M_%S')
+        self.result_save_path = os.path.join("./result", f"{self.dataset}_{self.time}")
+        if not os.path.exists(self.result_save_path):
+            os.makedirs(self.result_save_path)
+        print(f"Save to {self.result_save_path}")
+
+        with open(os.path.join(self.result_save_path, "config.txt"),'w',encoding='UTF-8') as f:
+            for code,name in config.items():
+                f.write(f'{code} : {name}\n')
+
+        with open(os.path.join(self.result_save_path, "config.p"), "wb") as f:
+            pickle.dump(config, f)
 
         print("======================TRAIN MODE======================")
-
         rec_loss_list = []
         assdis_list = []
 
-        time_now = time.time()
-        path = self.model_save_path
-        if not os.path.exists(path):
-            os.makedirs(path)
         early_stopping = EarlyStopping(patience=self.patience, verbose=True, dataset_name=self.dataset)
         train_steps = len(self.train_loader)
 
@@ -240,7 +226,7 @@ class Solver(object):
             print("Epoch: {} cost time: {}".format(epoch + 1, time.time() - epoch_time))
             train_loss = np.average(loss1_list)
 
-            vali_loss1, vali_loss2 = self.vali(self.test_loader)
+            vali_loss1, vali_loss2 = self.vali(self.vali_loader)
 
             print(
                 "Epoch: {0}, Steps: {1} | Train Loss: {2:.7f} Vali Loss: {3:.7f} ".format(
@@ -255,11 +241,65 @@ class Solver(object):
         np.save(os.path.join(self.result_save_path, f"{self.dataset}_rec_list"), np.array(rec_loss_list))
         np.save(os.path.join(self.result_save_path, f"{self.dataset}_assdis_list"), np.array(assdis_list))
 
-    def test(self, test_data_path=None):
-        if test_data_path is not None:
-            self.thre_loader = get_loader_segment(test_data_path, batch_size=self.batch_size, win_size=self.win_size,
-                                              mode='thre',
-                                              dataset=self.dataset)
+        # (1) stastic on the train set
+        temperature = 50
+        attens_energy = []
+        criterion = nn.MSELoss(reduce=False)
+        for i, (input_data, labels) in enumerate(self.train_loader):
+            input = input_data.float().to(self.device)
+            output, series, prior, _ = self.model(input)
+            loss = torch.mean(criterion(input, output), dim=-1)
+            series_loss = 0.0
+            prior_loss = 0.0
+            for u in range(len(prior)):
+                if u == 0:
+                    series_loss = my_kl_loss(series[u], (
+                            prior[u] / torch.unsqueeze(torch.sum(prior[u], dim=-1), dim=-1).repeat(1, 1, 1,
+                                                                                                   self.win_size)).detach()) * temperature
+                    prior_loss = my_kl_loss(
+                        (prior[u] / torch.unsqueeze(torch.sum(prior[u], dim=-1), dim=-1).repeat(1, 1, 1,
+                                                                                                self.win_size)),
+                        series[u].detach()) * temperature
+                else:
+                    series_loss += my_kl_loss(series[u], (
+                            prior[u] / torch.unsqueeze(torch.sum(prior[u], dim=-1), dim=-1).repeat(1, 1, 1,
+                                                                                                   self.win_size)).detach()) * temperature
+                    prior_loss += my_kl_loss(
+                        (prior[u] / torch.unsqueeze(torch.sum(prior[u], dim=-1), dim=-1).repeat(1, 1, 1,
+                                                                                                self.win_size)),
+                        series[u].detach()) * temperature
+
+            metric = torch.softmax((-series_loss - prior_loss), dim=-1)
+            cri = metric * loss
+            cri = cri.detach().cpu().numpy()
+            attens_energy.append(cri)
+
+        attens_energy = np.concatenate(attens_energy, axis=0).reshape(-1)
+        train_energy = np.array(attens_energy)
+
+        np.save(os.path.join(self.result_save_path, "train_energy"), train_energy)
+
+        return self.result_save_path
+
+    def test(self, config, model_save_path=None, data_path=None, th=None, detect_interval=None):
+
+        if data_path is not None:
+            self.data_path = data_path
+            config['data_path'] = data_path
+        if model_save_path is not None:
+            self.model_save_path = model_save_path
+            config['model_save_path'] = model_save_path
+
+        self.thre_loader = get_loader_segment(self.data_path, batch_size=1, win_size=self.win_size,
+                                              mode='test',
+                                              dataset=self.dataset,
+                                              step=detect_interval)
+
+        now = datetime.now()
+        self.time = now.strftime('%Y_%m_%d_%H_%M_%S')
+        self.result_save_path = os.path.join(self.model_save_path, f"{self.dataset}_{self.time}")
+        # if not os.path.exists(self.result_save_path):
+        #     os.makedirs(self.result_save_path)
 
         criterion = nn.MSELoss(reduce=False)
         temperature = 50
@@ -267,104 +307,18 @@ class Solver(object):
             torch.load(os.path.join(self.model_save_path, 'checkpoint.pth'), map_location=torch.device('cpu')))
         self.model.eval()
 
-        try:
-            combined_energy = np.load(os.path.join(self.model_save_path, "combined_energy.npy"))
-            thresh = np.percentile(combined_energy, 100 - self.anomaly_ratio)
-        except:
-            self.model.load_state_dict(
-                torch.load(os.path.join(self.model_save_path, 'checkpoint.pth'), map_location=torch.device('cpu')))
-            self.model.eval()
+        train_energy = np.load(os.path.join(self.model_save_path, "train_energy.npy"))
 
-            # (1) stastic on the train set
-            with st.spinner(text="Stastic on the train set..."):
-                my_bar = st.progress(0)
-                attens_energy = []
-                for i, (input_data, labels) in enumerate(self.train_loader):
-                    my_bar.progress(int(i * (100 / len(self.train_loader))) + 1)
-                    input = input_data.float().to(self.device)
-                    output, series, prior, _ = self.model(input)
-                    loss = torch.mean(criterion(input, output), dim=-1)
-                    series_loss = 0.0
-                    prior_loss = 0.0
-                    for u in range(len(prior)):
-                        if u == 0:
-                            series_loss = my_kl_loss(series[u], (
-                                    prior[u] / torch.unsqueeze(torch.sum(prior[u], dim=-1), dim=-1).repeat(1, 1, 1,
-                                                                                                           self.win_size)).detach()) * temperature
-                            prior_loss = my_kl_loss(
-                                (prior[u] / torch.unsqueeze(torch.sum(prior[u], dim=-1), dim=-1).repeat(1, 1, 1,
-                                                                                                        self.win_size)),
-                                series[u].detach()) * temperature
-                        else:
-                            series_loss += my_kl_loss(series[u], (
-                                    prior[u] / torch.unsqueeze(torch.sum(prior[u], dim=-1), dim=-1).repeat(1, 1, 1,
-                                                                                                           self.win_size)).detach()) * temperature
-                            prior_loss += my_kl_loss(
-                                (prior[u] / torch.unsqueeze(torch.sum(prior[u], dim=-1), dim=-1).repeat(1, 1, 1,
-                                                                                                        self.win_size)),
-                                series[u].detach()) * temperature
+        # with open(os.path.join(self.result_save_path, "config.txt"),'w',encoding='UTF-8') as f:
+        #     for code,name in config.items():
+        #         f.write(f'{code} : {name}\n')
 
-                    metric = torch.softmax((-series_loss - prior_loss), dim=-1)
-                    cri = metric * loss
-                    cri = cri.detach().cpu().numpy()
-                    attens_energy.append(cri)
-                my_bar.empty()
-
-                attens_energy = np.concatenate(attens_energy, axis=0).reshape(-1)
-                train_energy = np.array(attens_energy)
-
-            # (2) find the threshold
-            with st.spinner(text="Finding the threshold..."):
-                my_bar = st.progress(0)
-                attens_energy = []
-                for i, (input_data, labels) in enumerate(self.thre_loader):
-                    my_bar.progress(int(i * (100 / len(self.thre_loader))) + 1)
-                    input = input_data.float().to(self.device)
-                    output, series, prior, _ = self.model(input)
-
-                    loss = torch.mean(criterion(input, output), dim=-1)
-
-                    series_loss = 0.0
-                    prior_loss = 0.0
-                    for u in range(len(prior)):
-                        if u == 0:
-                            series_loss = my_kl_loss(series[u], (
-                                    prior[u] / torch.unsqueeze(torch.sum(prior[u], dim=-1), dim=-1).repeat(1, 1, 1,
-                                                                                                           self.win_size)).detach()) * temperature
-                            prior_loss = my_kl_loss(
-                                (prior[u] / torch.unsqueeze(torch.sum(prior[u], dim=-1), dim=-1).repeat(1, 1, 1,
-                                                                                                        self.win_size)),
-                                series[u].detach()) * temperature
-                        else:
-                            series_loss += my_kl_loss(series[u], (
-                                    prior[u] / torch.unsqueeze(torch.sum(prior[u], dim=-1), dim=-1).repeat(1, 1, 1,
-                                                                                                           self.win_size)).detach()) * temperature
-                            prior_loss += my_kl_loss(
-                                (prior[u] / torch.unsqueeze(torch.sum(prior[u], dim=-1), dim=-1).repeat(1, 1, 1,
-                                                                                                        self.win_size)),
-                                series[u].detach()) * temperature
-                    # Metric
-                    metric = torch.softmax((-series_loss - prior_loss), dim=-1)
-                    cri = metric * loss
-                    cri = cri.detach().cpu().numpy()
-                    attens_energy.append(cri)
-                my_bar.empty()
-
-                attens_energy = np.concatenate(attens_energy, axis=0).reshape(-1)
-                test_energy = np.array(attens_energy)
-                combined_energy = np.concatenate([train_energy, test_energy], axis=0)
-                thresh = np.percentile(combined_energy, 100 - self.anomaly_ratio)
-                print("Threshold :", thresh)
-
-                np.save(os.path.join(self.model_save_path, "combined_energy"), test_energy)
-
-        # (3) evaluation on the test set
-        # with st.spinner(text="Evaluation on the test set..."):
-        #     my_bar = st.progress(0)
+        # (1) find the threshold
+        time_list = []
         test_labels = []
         attens_energy = []
         for i, (input_data, labels) in enumerate(self.thre_loader):
-            # my_bar.progress(int(i * (100 / len(self.thre_loader))) + 1)
+            tik = time.time()
             input = input_data.float().to(self.device)
             output, series, prior, _ = self.model(input)
 
@@ -389,29 +343,36 @@ class Solver(object):
                         (prior[u] / torch.unsqueeze(torch.sum(prior[u], dim=-1), dim=-1).repeat(1, 1, 1,
                                                                                                 self.win_size)),
                         series[u].detach()) * temperature
-            metric = torch.softmax((-series_loss - prior_loss), dim=-1)
 
+            metric = torch.softmax((-series_loss - prior_loss), dim=-1)
             cri = metric * loss
             cri = cri.detach().cpu().numpy()
             attens_energy.append(cri)
             test_labels.append(labels)
-            # my_bar.empty()
+            tok = time.time()
+            time_list.append(tok - tik)
 
         attens_energy = np.concatenate(attens_energy, axis=0).reshape(-1)
-        test_labels = np.concatenate(test_labels, axis=0).reshape(-1)
         test_energy = np.array(attens_energy)
+        combined_energy = np.concatenate([train_energy, test_energy], axis=0)
+        thresh = np.percentile(combined_energy, 100 - self.anomaly_ratio)
+
+        if th is not None:
+            thresh = th
+
+        test_labels = np.concatenate(test_labels, axis=0).reshape(-1)
         test_labels = np.array(test_labels)
 
-        np.save(os.path.join(self.result_save_path, f"test_energy"), test_energy)
-        np.save(os.path.join(self.result_save_path, f"test_labels"), test_labels)
+        # np.save(os.path.join(self.result_save_path, "combined_energy"), test_energy)
+        # np.save(os.path.join(self.result_save_path, "test_energy"), test_energy)
+        # np.save(os.path.join(self.result_save_path, "test_labels"), test_labels)
 
-        # test_energy = np.load(os.path.join(self.model_save_path, "test_energy.npy"))
-        # test_labels = np.load(os.path.join(self.model_save_path, "test_labels.npy"))
         pred = (test_energy > thresh).astype(int)
         gt = test_labels.astype(int)
 
-        print("pred:   ", pred.shape)
-        print("gt:     ", gt.shape)
+        # print("Threshold :", thresh)
+        # print("pred:   ", pred.shape)
+        # print("gt:     ", gt.shape)
 
         # detection adjustment
         anomaly_state = False
@@ -437,8 +398,8 @@ class Solver(object):
 
         pred = np.array(pred)
         gt = np.array(gt)
-        print("pred: ", pred.shape)
-        print("gt:   ", gt.shape)
+        # print("pred: ", pred.shape)
+        # print("gt:   ", gt.shape)
 
         from sklearn.metrics import precision_recall_fscore_support
         from sklearn.metrics import accuracy_score
@@ -446,11 +407,21 @@ class Solver(object):
         precision, recall, f_score, support = precision_recall_fscore_support(gt, pred,
                                                                               average='binary')
 
-        # st.write(f"batch_size {self.batch_size}\nd_model {self.dmodel}\nd_ff {self.dff}\nk {self.k}\nwindow_size {self.win_size}")
-        # st.write(f"e_layers {self.elayers}\npatience {self.patience}")
-        # st.write(
+        # print(f"batch_size {self.batch_size}\nd_model {self.dmodel}\nd_ff {self.dff}\nk {self.k}\nwindow_size {self.win_size}")
+        # print(f"e_layers {self.elayers}\npatience {self.patience}")
+        # print(
         #     "Accuracy : {:0.4f}, Precision : {:0.4f}, Recall : {:0.4f}, F-score : {:0.4f} ".format(
         #         accuracy, precision,
         #         recall, f_score))
 
-        return accuracy, precision, recall, f_score, test_energy, thresh
+        result ={
+            "accuracy": accuracy,
+            "precision": precision,
+            "recall": recall,
+            "f1": f_score
+        }
+        # with open(os.path.join(self.result_save_path, "result.txt"), 'w', encoding='UTF-8') as f:
+        #     for code, name in result.items():
+        #         f.write(f'{code} : {name}\n')
+
+        return accuracy, precision, recall, f_score, test_energy, thresh, time_list

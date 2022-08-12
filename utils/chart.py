@@ -1,6 +1,7 @@
 import altair as alt
 import pandas as pd
 import numpy as np
+import streamlit as st
 
 def create_dataframe(source_list, label_list, column_list, start=None, end=None):
 
@@ -37,7 +38,7 @@ def get_single_chart(source, title, width=None, height=None):
     if width != None:
         line = alt.Chart(source, title=title).mark_line(interpolate='basis').encode(
             x='Step:Q',
-            y=alt.Y('Value:Q', scale=alt.Scale(domain=(0,1))),
+            y=alt.Y('Value:Q', scale=alt.Scale(domain=(0,0.1))),
             color='Label:N'
         ).properties(width=width, height=height)
     else:
@@ -207,4 +208,46 @@ def get_double_chart(source1, source2, source3, title1, title2, feature_names, f
         (line2 + line2_ + selector2 + points2 + tooltips2 + areas).interactive()
     )
 
+
+def make_areas(gt, inc=0, color='red'):
+    end = []
+    start = []
+    for idx,i in enumerate(np.where(gt == 1)[0]):
+        if idx == 0:
+            current_num = i
+            start.append(i+inc)
+        else:
+            if i - current_num == 1:
+                current_num = i
+                if (idx+1) == len(np.where(gt == 1)[0]):
+                    end.append(i+inc)
+                continue
+            else:
+                end.append(current_num+inc)
+                start.append(i+inc)
+                current_num = i
+    cutoff = pd.DataFrame({
+        'index': [color for _ in range(len(start))],
+        'start': start,
+        'stop': end
+    })
+
+    areas = alt.Chart(
+        cutoff
+    ).mark_rect(
+        opacity=0.2
+    ).encode(
+        x='start',
+        x2='stop',
+        y=alt.value(0),  # pixels from top
+        y2=alt.value(360),  # pixels from top
+        color=alt.Color('index:N', scale=None)
+    )
+    return areas
+
+def draw_online_feature(title, title2, feature_list, feature_value, feature_names, rules, model_win_size):
+    st.subheader(title) #0,1,2,3,
+    source = create_dataframe([feature_value[:,feature_list].T], [feature_names[_] for _ in feature_list], ['Step', 'Label', 'Value'], 0, model_win_size)
+    line = get_single_chart(source, title2)
+    st.altair_chart(line + rules, use_container_width=True)
 

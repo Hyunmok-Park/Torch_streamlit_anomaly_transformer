@@ -7,3 +7,4 @@ Anomaly_transformer/result
 .idea
 .ipynb_checkpoints
 Streamlit.ipynb
+*.mp4
