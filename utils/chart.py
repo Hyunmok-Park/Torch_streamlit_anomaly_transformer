@@ -29,7 +29,7 @@ def create_dataframe(source_list, label_list, column_list, start=None, end=None)
 
     return df
 
-def get_single_chart(source, title, width=None, height=None):
+def get_single_chart(source, title, width=None, height=None, legend=True):
     # Create a selection that chooses the nearest point & selects based on x-value
 
     nearest = alt.selection(type='single', nearest=True, on='mouseover',
@@ -42,11 +42,18 @@ def get_single_chart(source, title, width=None, height=None):
             color='Label:N'
         ).properties(width=width, height=height)
     else:
-        line = alt.Chart(source, title=title).mark_line(interpolate='basis').encode(
-            x='Step:Q',
-            y='Value:Q',
-            color='Label:N'
-        )
+        if legend:
+            line = alt.Chart(source, title=title).mark_line(interpolate='basis').encode(
+                x='Step:Q',
+                y='Value:Q',
+                color='Label:N'
+            )
+        else:
+            line = alt.Chart(source, title=title).mark_line(interpolate='basis').encode(
+                x='Step:Q',
+                y='Value:Q',
+                color=alt.Color('Label:N', legend=None)
+            )
 
     # Transparent selectors across the chart. This is what tells us
     # the x-value of the cursor
@@ -248,6 +255,6 @@ def make_areas(gt, inc=0, color='red'):
 def draw_online_feature(title, title2, feature_list, feature_value, feature_names, rules, model_win_size):
     st.subheader(title) #0,1,2,3,
     source = create_dataframe([feature_value[:,feature_list].T], [feature_names[_] for _ in feature_list], ['Step', 'Label', 'Value'], 0, model_win_size)
-    line = get_single_chart(source, title2)
+    line = get_single_chart(source, title2, legend=False)
     st.altair_chart(line + rules, use_container_width=True)
 
