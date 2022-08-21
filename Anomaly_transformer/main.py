@@ -28,6 +28,8 @@ def main(config):
 
         new_config['model_save_path'] = config.model_save_path
         new_config['data_path'] = config.data_path
+        new_config['win_size'] = config.win_size
+        new_config['step'] = config.step
 
         solver = Solver(new_config)
         solver.test(new_config)
@@ -55,6 +57,7 @@ if __name__ == '__main__':
     parser.add_argument('--data_path', type=str, default='./dataset/creditcard_ts.csv')
     parser.add_argument('--model_save_path', type=str, default='None')
     parser.add_argument('--anomaly_ratio', type=float, default=4.00)
+    parser.add_argument('--step', type=int, default=50)
 
     parser.add_argument('--dmodel', type=int, default=1024)
     parser.add_argument('--dff', type=int, default=1024)
